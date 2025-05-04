@@ -1,0 +1,194 @@
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+import os
+import rembg
+from PIL import Image
+import io
+import base64
+import threading
+import subprocess
+
+app = Flask(__name__, static_folder='../client/dist')
+CORS(app)
+
+# Background removal endpoint
+@app.route('/api/process', methods=['POST'])
+def process_image():
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+    
+    image_file = request.files['image']
+    bg_option = request.form.get('bgOption', 'transparent')
+    
+    # Process image
+    img = Image.open(image_file.stream)
+    output = rembg.remove(img)
+    
+    # Handle background options
+    if bg_option == 'white':
+        background = Image.new('RGB', output.size, (255, 255, 255))
+        background.paste(output, mask=output.split()[-1])
+        output = background
+    elif bg_option == 'black':
+        background = Image.new('RGB', output.size, (0, 0, 0))
+        background.paste(output, mask=output.split()[-1])
+        output = background
+    
+    # Convert to base64
+    buffered = io.BytesIO()
+    output.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode()
+    
+    return jsonify({'processedImage': f'data:image/png;base64,{img_str}'})
+
+# Serve React app
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve(path):
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        return send_from_directory(app.static_folder, 'index.html')
+
+def run_react():
+    os.chdir('../client')
+    subprocess.run(['npm', 'run', 'dev'], shell=True)
+
+if __name__ == '__main__':
+    # Start React dev server in parallel
+    threading.Thread(target=run_react, daemon=True).start()
+    # Start Flask app
+    app.run(port=5000)import React, { useState, useRef } from 'react';
+
+export default function App() {
+  const [image, setImage] = useState(null);
+  const [processedImage, setProcessedImage] = useState(null);
+  const [bgOption, setBgOption] = useState('transparent');
+  const [loading, setLoading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => setImage(reader.result);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const processImage = async () => {
+    if (!image) return;
+    setLoading(true);
+    
+    try {
+      const formData = new FormData();
+      const blob = await fetch(image).then(r => r.blob());
+      formData.append('image', blob);
+      formData.append('bgOption', bgOption);
+      
+      const response = await fetch('/api/process', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      const result = await response.json();
+      setProcessedImage(result.processedImage);
+    } catch (error) {
+      console.error('Error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '2rem', textAlign: 'center' }}>
+      <h1>AI Background Changer</h1>
+      
+      <div 
+        style={{ border: '2px dashed #ccc', padding: '2rem', margin: '1rem 0', cursor: 'pointer', borderRadius: '8px' }}
+        onClick={() => fileInputRef.current.click()}
+      >
+        {image ? (
+          <img src={image} alt="Uploaded" style={{ maxWidth: '100%', maxHeight: '400px', display: 'block', margin: '0 auto' }} />
+        ) : (
+          <p>Click to upload an image</p>
+        )}
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleImageUpload}
+          accept="image/*"
+          style={{ display: 'none' }}
+        />
+      </div>
+      
+      {image && (
+        <div style={{ margin: '1rem 0', display: 'flex', gap: '1rem', justifyContent: 'center', alignItems: 'center' }}>
+          <select 
+            value={bgOption} 
+            onChange={(e) => setBgOption(e.target.value)}
+            style={{ padding: '0.5rem 1rem', fontSize: '1rem' }}
+          >
+            <option value="transparent">Transparent</option>
+            <option value="white">White</option>
+            <option value="black">Black</option>
+          </select>
+          
+          <button 
+            onClick={processImage} 
+            disabled={loading}
+            style={{ padding: '0.5rem 1rem', fontSize: '1rem', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+          >
+            {loading ? 'Processing...' : 'Change Background'}
+          </button>
+        </div>
+      )}
+      
+      {processedImage && (
+        <div style={{ marginTop: '2rem', paddingTop: '2rem', borderTop: '1px solid #eee' }}>
+          <h2>Result</h2>
+          <img src={processedImage} alt="Processed" style={{ maxWidth: '100%', maxHeight: '400px', display: 'block', margin: '0 auto' }} />
+          <a 
+            href={processedImage} 
+            download="processed-image.png"
+            style={{ display: 'inline-block', marginTop: '1rem', padding: '0.5rem 1rem', backgroundColor: '#2196F3', color: 'white', textDecoration: 'none', borderRadius: '4px' }}
+          >
+            Download
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}/ai-background-changer
+  /client
+    /src
+      App.jsx
+    index.html
+    package.json
+    vite.config.js
+  app.py
+  requirements.txtflask
+flask-cors
+rembg
+pillow{
+  "name": "client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "vite": "^4.4.5"
+  }
+}# Python
+pip install -r requirements.txt
+
+# Node.js
+cd client
+npm install
+cd ..python app.py
